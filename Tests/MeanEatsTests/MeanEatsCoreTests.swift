@@ -130,3 +130,60 @@ final class AllergenParsingTests: XCTestCase {
         XCTAssertNil(Allergen.from(string: "unknown-thing"))
     }
 }
+
+final class MenuFilterAllergenTests: XCTestCase {
+
+    private func item(allergens: [Allergen] = [],
+                      calories: Double = 0,
+                      nutritionLoaded: Bool) -> MenuItem {
+        MenuItem(
+            id: "test-hall-1",
+            recipeID: "1",
+            name: "Test Item",
+            description: "",
+            category: .other,
+            nutrition: NutritionInfo(calories: calories, protein: 0, carbohydrates: 0, fat: 0,
+                                     allergens: allergens),
+            nutritionLoaded: nutritionLoaded,
+            dietaryTags: [],
+            mealPeriods: [.lunch],
+            diningHallId: "test-hall"
+        )
+    }
+
+    private func excluding(_ allergens: Allergen...) -> MenuFilter {
+        var filter = MenuFilter()
+        filter.allergenExclusions = Set(allergens.map(\.rawValue))
+        return filter
+    }
+
+    func testListedAllergenIsExcludedEvenWithoutMacros() {
+        // Label lists peanuts but has no calories/macros, so nutritionLoaded is false.
+        let peanutItem = item(allergens: [.peanuts], nutritionLoaded: false)
+        XCTAssertTrue(peanutItem.hasAllergenInfo)
+        XCTAssertFalse(excluding(.peanuts).matches(peanutItem))
+    }
+
+    func testItemWithNoAllergenInfoIsHiddenWhenExcluding() {
+        let unknown = item(nutritionLoaded: false)
+        XCTAssertFalse(unknown.hasAllergenInfo)
+        XCTAssertFalse(excluding(.peanuts).matches(unknown))
+    }
+
+    func testLabeledItemWithoutTheAllergenIsShown() {
+        let labeled = item(calories: 320, nutritionLoaded: true)
+        XCTAssertTrue(labeled.hasAllergenInfo)
+        XCTAssertTrue(excluding(.peanuts).matches(labeled))
+    }
+
+    func testLabeledItemWithTheAllergenIsHidden() {
+        let milkItem = item(allergens: [.milk], calories: 200, nutritionLoaded: true)
+        XCTAssertFalse(excluding(.milk).matches(milkItem))
+        XCTAssertTrue(excluding(.peanuts).matches(milkItem))
+    }
+
+    func testUnknownItemsStillShowWithoutAnAllergenFilter() {
+        let unknown = item(nutritionLoaded: false)
+        XCTAssertTrue(MenuFilter().matches(unknown))
+    }
+}

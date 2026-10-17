@@ -133,8 +133,12 @@ struct MenuFilter: Equatable {
             if dietaryTags.isDisjoint(with: itemTags) { return false }
         }
 
-        // Allergen exclusion: hide items containing any of the user's flagged allergens
-        if !allergenExclusions.isEmpty && item.nutritionLoaded {
+        // Allergen exclusion: hide items containing any of the user's flagged allergens.
+        // Listed allergens always count, even when the label has no macros. Items with
+        // no allergen info at all are hidden too: their empty list means "unknown",
+        // and showing them under "No Peanuts" would read as peanut-free.
+        if !allergenExclusions.isEmpty {
+            guard item.hasAllergenInfo else { return false }
             let itemAllergens = Set(item.nutrition.allergens.map(\.rawValue))
             if !allergenExclusions.isDisjoint(with: itemAllergens) { return false }
         }

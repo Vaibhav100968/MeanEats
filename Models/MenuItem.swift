@@ -169,6 +169,11 @@ struct MenuItem: Identifiable, Codable, Hashable {
 
     var primaryDietaryTag: DietaryTag? { dietaryTags.first }
 
+    /// True when the menu data says anything about this item's allergens: a
+    /// nutrition label was loaded, or allergens are listed. False means the
+    /// allergen list is unknown, which is not the same as allergen-free.
+    var hasAllergenInfo: Bool { nutritionLoaded || nutrition.hasAllergens }
+
     var caloriesDisplay: String {
         guard nutritionLoaded else { return "—" }
         return "\(Int(nutrition.calories)) cal"

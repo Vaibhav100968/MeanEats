@@ -25,15 +25,35 @@ struct DiningHallDetailView: View {
     /// Ordered list of unique station names for the current period.
     private var stations: [String] { diningService.stations(for: hall, period: selectedPeriod) }
 
+    /// All items for the period, narrowed by the search text only.
+    private var searchedItems: [MenuItem] {
+        let periodItems = diningService.menuItems(for: hall, period: selectedPeriod)
+        guard !searchText.isEmpty else { return periodItems }
+        return periodItems.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            $0.description.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    /// Items that pass every other filter but are hidden because the allergen
+    /// filter has no allergen info to check them against.
+    private var hiddenForMissingAllergenInfo: Int {
+        guard !menuFilter.allergenExclusions.isEmpty else { return 0 }
+        var otherFilters = menuFilter
+        otherFilters.allergenExclusions = []
+        return searchedItems.filter { !$0.hasAllergenInfo && otherFilters.matches($0) }.count
+    }
+
+    private var hiddenItemsNote: String {
+        let count = hiddenForMissingAllergenInfo
+        return count == 1
+            ? "1 item is hidden because no allergen info is listed for it."
+            : "\(count) items are hidden because no allergen info is listed for them."
+    }
+
     /// All items for the period, filtered by search + MenuFilter, grouped by station.
     private var groupedItems: [(station: String, items: [MenuItem])] {
-        var allItems = diningService.menuItems(for: hall, period: selectedPeriod)
-        if !searchText.isEmpty {
-            allItems = allItems.filter {
-                $0.name.localizedCaseInsensitiveContains(searchText) ||
-                $0.description.localizedCaseInsensitiveContains(searchText)
-            }
-        }
+        var allItems = searchedItems
         if menuFilter.isActive {
             allItems = allItems.filter { menuFilter.matches($0) }
         }
@@ -139,7 +159,15 @@ struct DiningHallDetailView: View {
                         if menuFilter.isActive && !showFilters {
                             activeFilterChips
                                 .padding(.horizontal, 20)
-                                .padding(.bottom, 12)
+                                .padding(.bottom, appliesListedDataFilters ? 8 : 12)
+
+                            // Dietary and allergen filters can be pre-set from the
+                            // profile, so repeat the reminder wherever results are filtered.
+                            if appliesListedDataFilters {
+                                listedDataReminder(compact: true)
+                                    .padding(.horizontal, 20)
+                                    .padding(.bottom, 12)
+                            }
                         }
 
                         // MARK: Menu Items grouped by station
@@ -510,26 +538,67 @@ struct DiningHallDetailView: View {
 
     // MARK: - Empty State
 
+    /// True when the period has items (after search) but the active filters hide all of them.
+    private var filtersHideEverything: Bool {
+        menuFilter.isActive && !searchedItems.isEmpty
+    }
+
+    private var emptyStateIcon: String {
+        if filtersHideEverything { return "line.3.horizontal.decrease.circle" }
+        return searchText.isEmpty ? "moon.zzz.fill" : "magnifyingglass"
+    }
+
+    private var emptyStateTitle: String {
+        if filtersHideEverything { return "No matches" }
+        return searchText.isEmpty ? "No menu items" : "No results"
+    }
+
+    private var emptyStateMessage: String {
+        if filtersHideEverything {
+            var message = "No items match your filters."
+            if hiddenForMissingAllergenInfo > 0 {
+                message += " " + hiddenItemsNote
+            }
+            return message
+        }
+        if searchText.isEmpty {
+            return "The \(selectedPeriod.rawValue.lowercased()) menu is not available yet for \(hall.name).\nTry a different meal period."
+        }
+        return "No items match \"\(searchText)\". Try a different search."
+    }
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             ZStack {
                 Circle().fill(Color.untGreenMint.opacity(0.15)).frame(width: 80, height: 80)
-                Image(systemName: searchText.isEmpty ? "moon.zzz.fill" : "magnifyingglass")
+                Image(systemName: emptyStateIcon)
                     .font(.system(size: 32))
                     .foregroundStyle(Color.untGreenMint)
             }
             VStack(spacing: 6) {
-                Text(searchText.isEmpty ? "No menu items" : "No results")
+                Text(emptyStateTitle)
                     .font(.headingMedium)
                     .foregroundStyle(Color.textPrimary)
-                Text(searchText.isEmpty
-                     ? "The \(selectedPeriod.rawValue.lowercased()) menu is not available yet for \(hall.name).\nTry a different meal period."
-                     : "No items match \"\(searchText)\". Try a different search.")
+                Text(emptyStateMessage)
                     .font(.bodySmall)
                     .foregroundStyle(Color.textSecondary)
                     .multilineTextAlignment(.center)
             }
-            if searchText.isEmpty && !periods.isEmpty {
+            if filtersHideEverything {
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        menuFilter = MenuFilter()
+                    }
+                } label: {
+                    Text("Clear Filters")
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Color.untGreenPrimary.opacity(0.15))
+                        .foregroundStyle(Color.untGreenPrimary)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(SpringButtonStyle())
+            } else if searchText.isEmpty && !periods.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(periods, id: \.self) { period in
@@ -625,6 +694,9 @@ struct DiningHallDetailView: View {
 
     private var menuFilterBar: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Point-of-use reminder, visible before any filter is applied
+            listedDataReminder(compact: false)
+
             // Dietary tags
             VStack(alignment: .leading, spacing: 6) {
                 Text("DIETARY")
@@ -796,6 +868,57 @@ struct DiningHallDetailView: View {
         .background(Color.surfaceBase)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+    }
+
+    // MARK: - Listed-Data Reminder
+
+    /// True when results are narrowed by dietary tags or allergen exclusions,
+    /// the filters people may rely on for food safety.
+    private var appliesListedDataFilters: Bool {
+        !menuFilter.dietaryTags.isEmpty || !menuFilter.allergenExclusions.isEmpty
+    }
+
+    /// Reminder that dietary and allergen filters only reflect what UNT's menus
+    /// list. The full version sits at the top of the filter panel; the compact
+    /// version sits under the active filter chips.
+    private func listedDataReminder(compact: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.statusWarning)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if compact {
+                    Text("Filtered using listed menu info only. Confirm with dining staff.")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(Color.textSecondary)
+                } else {
+                    Text("Confirm with dining staff")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Filters only check the allergens and diet tags listed on UNT's menus. Recipes can change and cross-contact isn't listed, so ask staff before you eat.")
+                        .font(.footnote)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                if hiddenForMissingAllergenInfo > 0 {
+                    Text(hiddenItemsNote)
+                        .font(.footnote)
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+        }
+        .padding(compact ? 10 : 12)
+        .background(Color.statusWarning.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.statusWarning.opacity(0.3), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Active Filter Chips

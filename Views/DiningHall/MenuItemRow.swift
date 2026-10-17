@@ -81,8 +81,9 @@ struct MenuItemRow: View {
                         }
                     }
 
-                    // Allergen warning badges
-                    if current.nutritionLoaded && current.nutrition.hasAllergens {
+                    // Allergen warning badges (shown whenever allergens are listed,
+                    // even if the label's macros are missing)
+                    if current.nutrition.hasAllergens {
                         AllergenBadgeRow(
                             allergens: current.nutrition.allergens,
                             userExclusions: userAllergenExclusions
